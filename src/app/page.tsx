@@ -1,8 +1,49 @@
 'use client';
 
+import { useState } from 'react';
+import UploadButton from '@/components/UploadButton';
+import RecentActivity from '@/components/RecentActivity';
+
 export default function HomePage() {
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'success' | 'error';
+  } | null>(null);
+
+  const handleUploadSuccess = (document: any) => {
+    console.log('Document uploaded:', document);
+    setNotification({
+      message: `${document.filename} uploaded successfully!`,
+      type: 'success'
+    });
+    // Trigger refresh of recent activity
+    setRefreshTrigger(prev => prev + 1);
+    // Clear notification after 3 seconds
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleUploadError = (error: string) => {
+    console.error('Upload error:', error);
+    setNotification({
+      message: error,
+      type: 'error'
+    });
+    setTimeout(() => setNotification(null), 5000);
+  };
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg ${
+          notification.type === 'success' 
+            ? 'bg-green-500 text-white' 
+            : 'bg-red-500 text-white'
+        }`}>
+          {notification.message}
+        </div>
+      )}
       
       {/* Header */}
       <div className="flex justify-center items-center py-12">
@@ -28,10 +69,10 @@ export default function HomePage() {
               placeholder="Ask me anything about your PDFs, or describe what you need..."
               className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl text-gray-700 focus:border-blue-400 focus:outline-none transition-colors"
             />
-            <button className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2">
-              <span className="text-lg">📤</span>
-              Upload PDF
-            </button>
+            <UploadButton
+              onUploadSuccess={handleUploadSuccess}
+              onUploadError={handleUploadError}
+            />
           </div>
           
           <p className="text-center text-gray-600 mt-4">
@@ -120,37 +161,7 @@ export default function HomePage() {
             Recent Activity
           </h3>
           
-          <div className="bg-white rounded-2xl p-6 shadow-lg max-w-3xl mx-auto">
-            {/* Document 1 */}
-            <div className="flex items-center gap-4 mb-6">
-              <span className="text-2xl">📄</span>
-              <div className="flex-1">
-                <h4 className="font-semibold text-gray-900">Marketing_Proposal.pdf</h4>
-                <p className="text-gray-600 text-sm">Content extracted</p>
-              </div>
-              <span className="text-gray-500 text-sm">2 hours ago</span>
-            </div>
-
-            {/* Document 2 */}
-            <div className="flex items-center gap-4 mb-6">
-              <span className="text-2xl">📄</span>
-              <div className="flex-1">
-                <h4 className="font-semibold text-gray-900">Contract_2024.pdf</h4>
-                <p className="text-gray-600 text-sm">Signature added</p>
-              </div>
-              <span className="text-gray-500 text-sm">5 hours ago</span>
-            </div>
-
-            {/* Document 3 */}
-            <div className="flex items-center gap-4">
-              <span className="text-2xl">📄</span>
-              <div className="flex-1">
-                <h4 className="font-semibold text-gray-900">Research_Report.pdf</h4>
-                <p className="text-gray-600 text-sm">Summary generated</p>
-              </div>
-              <span className="text-gray-500 text-sm">1 day ago</span>
-            </div>
-          </div>
+          <RecentActivity refreshTrigger={refreshTrigger} />
         </div>
       </div>
     </div>
