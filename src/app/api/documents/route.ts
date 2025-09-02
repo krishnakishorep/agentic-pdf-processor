@@ -1,24 +1,45 @@
 import { NextResponse } from 'next/server';
-import { documentDb } from '@/lib/database';
+import { supabase } from '@/lib/supabase';
 
 // GET /api/documents - Get recent documents
 export async function GET() {
   try {
     console.log('📋 Fetching recent documents...');
 
-    const documents = await documentDb.getRecent(10);
+    // Get documents with analysis data
+    const { data: documentsWithAnalysis, error } = await supabase
+      .from('documents')
+      .select(`
+        *,
+        document_analysis (
+          document_type,
+          confidence_score,
+          analysis_status,
+          metadata
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error) throw error;
 
     // Transform data for frontend
-    const transformedDocs = documents.map(doc => ({
-      id: doc.id,
-      filename: doc.filename,
-      status: doc.status,
-      document_type: doc.document_type || 'Unknown',
-      display_status: doc.display_status || getDisplayStatus(doc.status),
-      created_at: doc.created_at,
-      // Calculate relative time
-      time_ago: getTimeAgo(new Date(doc.created_at))
-    }));
+    const transformedDocs = (documentsWithAnalysis || []).map(doc => {
+      const analysis = doc.document_analysis?.[0];
+      
+      return {
+        id: doc.id,
+        filename: doc.filename,
+        status: doc.status,
+        document_type: analysis?.document_type || 'Unknown',
+        confidence: analysis?.confidence_score || null,
+        display_status: getDisplayStatus(doc.status, analysis?.analysis_status),
+        created_at: doc.created_at,
+        time_ago: getTimeAgo(new Date(doc.created_at)),
+        summary: analysis?.metadata?.summary || null,
+        insights: analysis?.metadata?.insights || []
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -39,16 +60,24 @@ export async function GET() {
 }
 
 // Helper function to get display-friendly status
-function getDisplayStatus(status: string): string {
+function getDisplayStatus(status: string, analysisStatus?: string): string {
+  if (status === 'processing') {
+    return 'Analyzing document...';
+  }
+  
+  if (status === 'completed' && analysisStatus === 'completed') {
+    return 'Analysis complete';
+  }
+  
+  if (status === 'failed' || analysisStatus === 'failed') {
+    return 'Analysis failed';
+  }
+  
   switch (status) {
     case 'uploaded':
-      return 'Uploaded';
-    case 'processing':
       return 'Processing...';
     case 'completed':
-      return 'Analysis complete';
-    case 'failed':
-      return 'Processing failed';
+      return 'Ready';
     default:
       return 'Unknown';
   }

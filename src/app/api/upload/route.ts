@@ -50,7 +50,21 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Document created with ID: ${document.id}`);
 
-    // TODO: In next step, we'll create an agent task to process this document
+    // Automatically trigger document processing
+    try {
+      // Process the document asynchronously (don't wait for completion)
+      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/process-document`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId: document.id })
+      }).catch(error => {
+        console.error('❌ Background processing failed:', error);
+      });
+      
+      console.log(`🚀 Background processing triggered for document: ${document.id}`);
+    } catch (error) {
+      console.log('⚠️ Could not trigger background processing:', error);
+    }
 
     return NextResponse.json({
       success: true,
@@ -60,7 +74,7 @@ export async function POST(request: NextRequest) {
         status: document.status,
         created_at: document.created_at
       },
-      message: 'File uploaded successfully'
+      message: 'File uploaded successfully - processing started'
     });
 
   } catch (error) {
