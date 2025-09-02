@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { documentDb, analysisDb } from '@/lib/database';
 import { pdfProcessor } from '@/lib/pdf-processor';
+import { emitDocumentEvent } from '@/lib/document-events';
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,10 +28,13 @@ export async function POST(request: NextRequest) {
 
     // 2. Update status to processing
     await documentDb.update(documentId, { status: 'processing' });
+    
+    // Emit processing started event
+    emitDocumentEvent.processing(documentId, `Processing document: ${document.filename}`);
 
     try {
       // 3. Process the PDF (extract text + OpenAI analysis)
-      const analysis = await pdfProcessor.processDocument(document.file_path);
+      const analysis = await pdfProcessor.processDocument(document.file_path, documentId);
 
       // 4. Save analysis results to database
       const analysisRecord = await analysisDb.create({
@@ -50,6 +54,15 @@ export async function POST(request: NextRequest) {
 
       // 5. Update document status to completed
       await documentDb.update(documentId, { status: 'completed' });
+      
+      // Emit completion event
+      emitDocumentEvent.completed(documentId, {
+        type: analysis.documentType,
+        confidence: analysis.confidence,
+        summary: analysis.summary,
+        insights: analysis.insights,
+        filename: document.filename
+      });
 
       console.log(`✅ Document processing complete: ${documentId}`);
 
@@ -72,6 +85,9 @@ export async function POST(request: NextRequest) {
       
       // Update document status to failed
       await documentDb.update(documentId, { status: 'failed' });
+      
+      // Emit failure event
+      emitDocumentEvent.failed(documentId, processingError instanceof Error ? processingError.message : 'Unknown error');
       
       // Still save a failed analysis record for tracking
       await analysisDb.create({

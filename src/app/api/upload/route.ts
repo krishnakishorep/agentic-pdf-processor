@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { uploadPDF } from '@/lib/supabase';
 import { documentDb } from '@/lib/database';
+import { emitDocumentEvent } from '@/lib/document-events';
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,18 +51,23 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Document created with ID: ${document.id}`);
 
-    // Automatically trigger document processing
+    // Emit SSE event for real-time UI updates
+    emitDocumentEvent.uploaded(document.id, document.filename);
+
+    // Automatically trigger document processing with delay to allow SSE connection
     try {
-      // Process the document asynchronously (don't wait for completion)
-      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/process-document`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentId: document.id })
-      }).catch(error => {
-        console.error('❌ Background processing failed:', error);
-      });
+      // Small delay to ensure SSE connection is established before processing events
+      setTimeout(() => {
+        fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/process-document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentId: document.id })
+        }).catch(error => {
+          console.error('❌ Background processing failed:', error);
+        });
+      }, 1000); // 1 second delay for SSE connection to establish
       
-      console.log(`🚀 Background processing triggered for document: ${document.id}`);
+      console.log(`🚀 Background processing will start in 1 second for document: ${document.id}`);
     } catch (error) {
       console.log('⚠️ Could not trigger background processing:', error);
     }

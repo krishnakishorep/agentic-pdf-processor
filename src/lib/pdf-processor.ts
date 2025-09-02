@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { PDFDocument } from 'pdf-lib';
 import { downloadFile } from './supabase';
+import { emitDocumentEvent } from './document-events';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -209,7 +210,7 @@ Respond with valid JSON only, no other text.`;
   /**
    * Complete processing pipeline: Extract + Analyze
    */
-  async processDocument(filePath: string): Promise<PDFAnalysisResult> {
+  async processDocument(filePath: string, documentId?: string): Promise<PDFAnalysisResult> {
     console.log(`🚀 Starting document processing pipeline for: ${filePath}`);
     
     // Step 1: Extract text
@@ -217,6 +218,11 @@ Respond with valid JSON only, no other text.`;
     
     if (!text || text.length < 50) {
       throw new Error('Document appears to be empty or contains insufficient text for analysis');
+    }
+    
+    // Emit analyzing event if documentId is provided
+    if (documentId) {
+      emitDocumentEvent.analyzing(documentId, 'Starting AI analysis...');
     }
     
     // Step 2: Analyze with OpenAI

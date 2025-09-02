@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { documentEvents } from '@/lib/document-events';
 
 interface Document {
   id: string;
@@ -16,6 +17,7 @@ interface RecentActivityProps {
 }
 
 export default function RecentActivity({ refreshTrigger }: RecentActivityProps) {
+  console.log('🔄 RecentActivity component rendered/re-rendered, refreshTrigger:', refreshTrigger);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,9 +43,32 @@ export default function RecentActivity({ refreshTrigger }: RecentActivityProps) 
     }
   };
 
+  // Load initial data once on mount - RE-ENABLED
   useEffect(() => {
-    fetchDocuments();
+    console.log('🔍 RecentActivity mounted, loading initial data');
+    fetchDocuments(); // RE-ENABLED
+  }, []); // Only run once on mount
+
+  // TEMPORARILY DISABLED - causing infinite loop on app start
+  useEffect(() => {
+    console.log('🔍 RecentActivity useEffect would trigger, refreshTrigger:', refreshTrigger);
+    // fetchDocuments(); // DISABLED
   }, [refreshTrigger]);
+
+  // Auto-refresh on document events - SIMPLIFIED to avoid loops
+  useEffect(() => {
+    const cleanup = documentEvents.onAllDocumentEvents((event) => {
+      console.log('📨 RecentActivity received document event:', event.status);
+      
+      // Only refresh on final completion - no debouncing needed since UploadButton handles the main refresh
+      if (event.status === 'completed') {
+        console.log('📄 Document completed, will refresh via main flow');
+        // Let the main page handle refresh via refreshTrigger - no need to double-refresh
+      }
+    });
+
+    return cleanup;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getStatusEmoji = (status: string) => {
     switch (status) {
