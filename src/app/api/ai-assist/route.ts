@@ -99,6 +99,131 @@ function integrateSourcesForIntent(type: string, validSources: any[]): string {
   return sourceSection;
 }
 
+// Embedding-based source relevance detection
+async function getContentEmbedding(content: string, openaiClient: OpenAI): Promise<number[]> {
+  try {
+    const response = await openaiClient.embeddings.create({
+      model: "text-embedding-3-small", // Fast and cost-effective
+      input: content.substring(0, 8000), // Limit input length for performance
+    });
+    return response.data[0].embedding;
+  } catch (error) {
+    console.log('⚠️ Embedding generation failed:', error);
+    return [];
+  }
+}
+
+function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length === 0 || vecB.length === 0) return 0;
+  
+  const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+  const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+  const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+  
+  if (magnitudeA === 0 || magnitudeB === 0) return 0;
+  return dotProduct / (magnitudeA * magnitudeB);
+}
+
+async function filterRelevantSources(
+  userContent: string, 
+  context: string, 
+  sources: any[], 
+  openaiClient: OpenAI
+): Promise<{
+  relevantSources: any[],
+  hasUnrelatedSources: boolean,
+  relevanceMessage: string
+}> {
+  if (sources.length === 0) {
+    return { relevantSources: [], hasUnrelatedSources: false, relevanceMessage: '' };
+  }
+
+  console.log('🔍 Analyzing source relevance using embeddings...');
+
+  // Create combined content for embedding (what user is actually writing about)
+  const combinedContent = `${userContent || ''}\n\n${context || ''}`.trim();
+  
+  if (combinedContent.length < 20) {
+    console.log('⚠️ Insufficient content for relevance analysis, using all sources');
+    return { 
+      relevantSources: sources, 
+      hasUnrelatedSources: false, 
+      relevanceMessage: '' 
+    };
+  }
+
+  try {
+    // Get embedding for user's content
+    const contentEmbedding = await getContentEmbedding(combinedContent, openaiClient);
+    
+    if (contentEmbedding.length === 0) {
+      console.log('⚠️ Content embedding failed, using all sources');
+      return { 
+        relevantSources: sources, 
+        hasUnrelatedSources: false, 
+        relevanceMessage: '' 
+      };
+    }
+
+    // Get embeddings for all sources and calculate similarity scores
+    const sourceAnalysis = await Promise.all(
+      sources.map(async (source: any) => {
+        const sourceEmbedding = await getContentEmbedding(source.content, openaiClient);
+        const similarity = calculateCosineSimilarity(contentEmbedding, sourceEmbedding);
+        
+        console.log(`📄 Source "${source.name}": similarity ${Math.round(similarity * 100)}%`);
+        
+        return {
+          source,
+          similarity,
+          isRelevant: similarity > 0.75 // Moderate threshold
+        };
+      })
+    );
+
+    const relevantSources = sourceAnalysis
+      .filter(item => item.isRelevant)
+      .sort((a, b) => b.similarity - a.similarity) // Most relevant first
+      .slice(0, 3) // Limit to top 3 most relevant
+      .map(item => item.source);
+
+    const unrelatedSources = sourceAnalysis.filter(item => !item.isRelevant);
+    const hasUnrelatedSources = unrelatedSources.length > 0;
+
+    let relevanceMessage = '';
+    
+    // Only show relevance messages if there are multiple sources (comparison makes sense)
+    if (sources.length > 1) {
+      if (hasUnrelatedSources && relevantSources.length > 0) {
+        // Some sources relevant, some not (multiple sources case)
+        const unrelatedNames = unrelatedSources.map(item => item.source.name).join(', ');
+        relevanceMessage = `Note: Some sources (${unrelatedNames}) appear unrelated to your current content. I'll focus on the most relevant sources but will do my best to incorporate useful information from all materials when appropriate.`;
+      } else if (hasUnrelatedSources && relevantSources.length === 0) {
+        // No relevant sources found (multiple sources case)
+        relevanceMessage = `Note: The provided sources appear to be unrelated to your current content topic. I'll do my best to write helpful content and will try to find any useful connections where possible.`;
+      }
+    }
+    // For single source: no relevance message - user intentionally uploaded it, so respect their choice
+
+    console.log(`✅ Relevance analysis complete: ${relevantSources.length}/${sources.length} relevant sources`);
+
+    return {
+      relevantSources: relevantSources.length > 0 ? relevantSources : sources, // Fallback to all sources if none relevant
+      hasUnrelatedSources,
+      relevanceMessage
+    };
+
+  } catch (error) {
+    console.log('❌ Relevance analysis failed:', error);
+    // Fallback to using all sources if embedding analysis fails
+    return { 
+      relevantSources: sources, 
+      hasUnrelatedSources: false, 
+      relevanceMessage: '' 
+    };
+  }
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
@@ -155,23 +280,36 @@ export async function POST(request: NextRequest) {
       userPrompt += `\n\nContext (full document):\n${context}`;
     }
 
-    // Add sources with intent-based integration
+    // Add sources with embedding-based relevance detection and intent-based integration
+    let relevanceMessage = '';
     if (sources && sources.length > 0) {
       console.log(`📚 Processing ${sources.length} source(s) for "${type}" operation...`);
       
-      // Simple validation - just check for basic content
+      // Basic validation first - filter out sources that are too short
       const validSources = sources.filter((source: any) => {
         const hasContent = source.content && source.content.trim().length > 20;
-        console.log(`📄 Source "${source.name}": ${hasContent ? 'VALID' : 'INVALID - too short'}`);
+        if (!hasContent) {
+          console.log(`📄 Source "${source.name}": INVALID - too short`);
+        }
         return hasContent;
       });
       
-      console.log(`✅ Using ${validSources.length}/${sources.length} valid sources with "${type}" integration strategy`);
-      
       if (validSources.length > 0) {
-        // Use intent-based source integration instead of generic approach
-        const sourceIntegration = integrateSourcesForIntent(type, validSources);
-        userPrompt += sourceIntegration;
+        // Use embedding-based relevance detection
+        const relevanceAnalysis = await filterRelevantSources(content, context, validSources, openai);
+        const { relevantSources, hasUnrelatedSources, relevanceMessage: relevanceMsg } = relevanceAnalysis;
+        
+        relevanceMessage = relevanceMsg; // Store for response
+        
+        console.log(`✅ Using ${relevantSources.length}/${validSources.length} relevant sources with "${type}" integration strategy`);
+        
+        if (relevantSources.length > 0) {
+          // Use intent-based source integration with only relevant sources
+          const sourceIntegration = integrateSourcesForIntent(type, relevantSources);
+          userPrompt += sourceIntegration;
+        }
+      } else {
+        console.log('⚠️ No valid sources found (all too short)');
       }
     }
 
@@ -260,6 +398,7 @@ Instructions:
       content: result.trim(),
       type,
       suggestedTitle,
+      relevanceMessage: relevanceMessage || undefined, // Include relevance message if present
       usage: completion.usage
     });
 

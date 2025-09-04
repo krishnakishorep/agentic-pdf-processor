@@ -13,27 +13,13 @@ export default function WritePage() {
   const [title, setTitle] = useState('');
   const [isGeneratingInitial, setIsGeneratingInitial] = useState(false);
   const [initialSources, setInitialSources] = useState<Source[]>([]);
+  const [initialRelevanceMessage, setInitialRelevanceMessage] = useState<string | undefined>();
   const [showTitleSuggestion, setShowTitleSuggestion] = useState(false);
   const [suggestedTitle, setSuggestedTitle] = useState('');
 
   useEffect(() => {
     const prompt = searchParams.get('prompt');
     const mode = searchParams.get('mode');
-    const hasSources = searchParams.get('hasSources') === 'true';
-
-    // Load sources from localStorage if available
-    if (hasSources) {
-      try {
-        const savedSources = localStorage.getItem('prompt-sources');
-        if (savedSources) {
-          const sources = JSON.parse(savedSources);
-          setInitialSources(sources);
-          localStorage.removeItem('prompt-sources'); // Clean up
-        }
-      } catch (error) {
-        console.error('Failed to load sources:', error);
-      }
-    }
 
     if (prompt && mode === 'generate') {
       setIsGeneratingInitial(true);
@@ -45,17 +31,44 @@ export default function WritePage() {
     try {
       console.log('🚀 Generating initial content from prompt:', prompt);
       
+      // Load sources directly from localStorage to avoid timing issues
+      let sourcesToUse: Source[] = [];
+      const hasSources = searchParams.get('hasSources') === 'true';
+      
+      if (hasSources) {
+        try {
+          const savedSources = localStorage.getItem('prompt-sources');
+          if (savedSources) {
+            const sources = JSON.parse(savedSources) as Source[];
+            // Use all sources regardless of status - PromptInterface sources should be usable
+            sourcesToUse = sources;
+            console.log(`📚 Loaded ${sourcesToUse.length} sources from localStorage for content generation:`, 
+              sources.map(s => ({ name: s.name, type: s.type, status: s.status, hasContent: !!s.content })));
+          }
+        } catch (error) {
+          console.error('Failed to load sources for content generation:', error);
+        }
+      }
+      
       const response = await fetch('/api/generate-content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, sources: initialSources.filter(s => s.status === 'ready') })
+        body: JSON.stringify({ prompt, sources: sourcesToUse })
       });
 
       if (response.ok) {
         const result = await response.json();
         setInitialContent(result.content);
         setTitle(result.title || 'AI Generated Content');
-        console.log('✅ Initial content generated');
+        setInitialRelevanceMessage(result.relevanceMessage); // Pass relevance message to ContentEditor
+        
+        // Set the sources in state for the UI and clean up localStorage
+        if (sourcesToUse.length > 0) {
+          setInitialSources(sourcesToUse);
+          localStorage.removeItem('prompt-sources'); // Clean up after successful use
+        }
+        
+        console.log('✅ Initial content generated with', sourcesToUse.length, 'sources');
       } else {
         console.error('❌ Failed to generate initial content');
         setInitialContent(`# ${getDefaultTitle(prompt)}\n\n${getDefaultContent(prompt)}`);
@@ -216,6 +229,7 @@ export default function WritePage() {
               onContentChange={handleContentChange}
               initialSources={initialSources}
               onTitleSuggestion={handleTitleSuggestion}
+              initialRelevanceMessage={initialRelevanceMessage}
             />
           )}
         </div>

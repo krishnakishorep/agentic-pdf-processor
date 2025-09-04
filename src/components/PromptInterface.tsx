@@ -48,6 +48,7 @@ export default function PromptInterface({ onPromptSubmit }: PromptInterfaceProps
 
       // Store sources in localStorage for the write page to use
       if (sources.length > 0) {
+        console.log('📚 Storing sources in localStorage:', sources.map(s => ({ name: s.name, type: s.type, status: s.status, hasContent: !!s.content })));
         localStorage.setItem('prompt-sources', JSON.stringify(sources));
       } else {
         localStorage.removeItem('prompt-sources');

@@ -1,6 +1,126 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
+// Embedding-based source relevance detection (copied from ai-assist)
+async function getContentEmbedding(content: string, openaiClient: OpenAI): Promise<number[]> {
+  try {
+    const response = await openaiClient.embeddings.create({
+      model: "text-embedding-3-small",
+      input: content.substring(0, 8000),
+    });
+    return response.data[0].embedding;
+  } catch (error) {
+    console.log('⚠️ Embedding generation failed:', error);
+    return [];
+  }
+}
+
+function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length === 0 || vecB.length === 0) return 0;
+  
+  const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+  const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+  const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+  
+  if (magnitudeA === 0 || magnitudeB === 0) return 0;
+  return dotProduct / (magnitudeA * magnitudeB);
+}
+
+async function filterRelevantSourcesForGeneration(
+  prompt: string, 
+  sources: any[], 
+  openaiClient: OpenAI
+): Promise<{
+  relevantSources: any[],
+  relevanceMessage: string
+}> {
+  if (sources.length === 0) {
+    return { relevantSources: [], relevanceMessage: '' };
+  }
+
+  console.log('🔍 Analyzing source relevance for content generation...');
+
+  if (prompt.length < 20) {
+    console.log('⚠️ Insufficient prompt for relevance analysis, using all sources');
+    return { relevantSources: sources, relevanceMessage: '' };
+  }
+
+  try {
+    // Get embedding for user's prompt
+    const promptEmbedding = await getContentEmbedding(prompt, openaiClient);
+    
+    if (promptEmbedding.length === 0) {
+      console.log('⚠️ Prompt embedding failed, using all sources');
+      return { relevantSources: sources, relevanceMessage: '' };
+    }
+
+    // Get embeddings for all sources and calculate similarity scores
+    const sourceAnalysis = await Promise.all(
+      sources.map(async (source: any) => {
+        const sourceEmbedding = await getContentEmbedding(source.content, openaiClient);
+        const similarity = calculateCosineSimilarity(promptEmbedding, sourceEmbedding);
+        
+        console.log(`📄 Source "${source.name}": similarity ${Math.round(similarity * 100)}%`);
+        
+        return {
+          source,
+          similarity,
+          isRelevant: similarity > 0.75
+        };
+      })
+    );
+
+    const relevantSources = sourceAnalysis
+      .filter(item => item.isRelevant)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 3)
+      .map(item => item.source);
+
+    const unrelatedSources = sourceAnalysis.filter(item => !item.isRelevant);
+    const hasUnrelatedSources = unrelatedSources.length > 0;
+
+    let relevanceMessage = '';
+    
+    // Only show relevance messages if there are multiple sources
+    if (sources.length > 1) {
+      if (hasUnrelatedSources && relevantSources.length > 0) {
+        const unrelatedNames = unrelatedSources.map(item => item.source.name).join(', ');
+        relevanceMessage = `Note: Some sources (${unrelatedNames}) appear unrelated to your prompt. I'll focus on the most relevant sources but will do my best to incorporate useful information from all materials when appropriate.`;
+      } else if (hasUnrelatedSources && relevantSources.length === 0) {
+        relevanceMessage = `Note: The provided sources appear to be unrelated to your prompt. I'll do my best to create helpful content and will try to find any useful connections where possible.`;
+      }
+    }
+
+    console.log(`✅ Relevance analysis complete: ${relevantSources.length}/${sources.length} relevant sources`);
+
+    return {
+      relevantSources: relevantSources.length > 0 ? relevantSources : sources,
+      relevanceMessage
+    };
+
+  } catch (error) {
+    console.log('❌ Relevance analysis failed:', error);
+    return { relevantSources: sources, relevanceMessage: '' };
+  }
+}
+
+// Intent-based source integration for content generation
+function integrateSourcesForGeneration(relevantSources: any[]): string {
+  if (relevantSources.length === 0) return '';
+  
+  // For initial content generation, use a comprehensive approach
+  let sourceSection = `\n\nReference Sources for comprehensive content creation:\n`;
+  
+  relevantSources.forEach((source: any, index: number) => {
+    const excerpt = source.content.substring(0, 1000); // More generous for initial generation
+    sourceSection += `\n${index + 1}. ${source.name} (${source.type}):\n${excerpt}${source.content.length > 1000 ? '...' : ''}\n`;
+  });
+  
+  sourceSection += `\nUse these sources to create well-researched, factually accurate content. Integrate insights naturally and cite specific examples or data points where relevant.`;
+  
+  return sourceSection;
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
@@ -37,34 +157,44 @@ export async function POST(request: NextRequest) {
 
     const title = titleCompletion.choices[0]?.message?.content?.trim() || 'AI Generated Content';
 
-    // Generate main content with smart model selection
-    const totalSourcesLength = sources.reduce((sum: number, s: any) => sum + s.content.length, 0);
-    const promptLength = prompt.length + title.length;
-    const estimatedTokens = Math.ceil((promptLength + totalSourcesLength) / 4);
-    
-    let model = 'gpt-4';
+    // Use intelligent source filtering and integration
+    let relevanceMessage = '';
     let sourcesContent = '';
     
     if (sources.length > 0) {
-      if (estimatedTokens > 7000) {
-        console.log('🔄 Using GPT-4 Turbo for large content generation...');
-        model = 'gpt-4-turbo-preview';
-        // Use full sources for turbo model
-        sourcesContent = `\n\nReference Sources:\n${sources.map((source: any, index: number) => 
-          `${index + 1}. ${source.name} (${source.type}):\n${source.content}`
-        ).join('\n\n')}\n\nPlease use these sources as reference material when generating content.`;
-      } else if (totalSourcesLength > 5000) {
-        console.log('📚 Large sources, using summarized version for content generation...');
-        // Truncate sources for regular GPT-4
-        sourcesContent = `\n\nReference Sources (summarized):\n${sources.map((source: any, index: number) => {
-          const preview = source.content.substring(0, 500);
-          return `${index + 1}. ${source.name} (${source.type}):\n${preview}${source.content.length > 500 ? '...' : ''}`;
-        }).join('\n\n')}\n\nPlease use these sources as reference material when generating content.`;
-      } else {
-        sourcesContent = `\n\nReference Sources:\n${sources.map((source: any, index: number) => 
-          `${index + 1}. ${source.name} (${source.type}):\n${source.content}`
-        ).join('\n\n')}\n\nPlease use these sources as reference material when generating content.`;
+      // Basic validation - filter out sources that are too short
+      const validSources = sources.filter((source: any) => {
+        const hasContent = source.content && source.content.trim().length > 20;
+        if (!hasContent) {
+          console.log(`📄 Source "${source.name}": INVALID - too short`);
+        }
+        return hasContent;
+      });
+
+      if (validSources.length > 0) {
+        // Use embedding-based relevance detection
+        const relevanceAnalysis = await filterRelevantSourcesForGeneration(prompt, validSources, openai);
+        const { relevantSources, relevanceMessage: relevanceMsg } = relevanceAnalysis;
+        
+        relevanceMessage = relevanceMsg;
+        
+        console.log(`✅ Using ${relevantSources.length}/${validSources.length} relevant sources for content generation`);
+        
+        if (relevantSources.length > 0) {
+          // Use intelligent source integration
+          sourcesContent = integrateSourcesForGeneration(relevantSources);
+        }
       }
+    }
+
+    // Smart model selection based on content size
+    const totalContentLength = prompt.length + title.length + sourcesContent.length;
+    const estimatedTokens = Math.ceil(totalContentLength / 4);
+    
+    let model = 'gpt-4';
+    if (estimatedTokens > 7000) {
+      console.log('🔄 Using GPT-4 Turbo for large content generation...');
+      model = 'gpt-4-turbo-preview';
     }
 
     const contentCompletion = await openai.chat.completions.create({
@@ -72,7 +202,7 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: 'system',
-          content: `You are a professional content writer. Create well-structured, engaging content based on the user's request. 
+          content: `You are a professional content writer. Create well-structured, engaging content based on the user's request. When reference sources are provided, integrate insights naturally and use specific examples or data points to support your content.
 
 Format guidelines:
 - Use markdown formatting for headers, lists, and emphasis
@@ -106,6 +236,7 @@ The content should be substantial but not overwhelming - aim for 400-800 words.`
       success: true,
       title,
       content: content.trim(),
+      relevanceMessage: relevanceMessage || undefined, // Include relevance message if present
       usage: {
         title_tokens: titleCompletion.usage?.total_tokens || 0,
         content_tokens: contentCompletion.usage?.total_tokens || 0

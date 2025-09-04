@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import SourcesManager, { Source } from './SourcesManager';
 import TokenUsageIndicator from './TokenUsageIndicator';
@@ -10,6 +10,7 @@ interface ContentEditorProps {
   onContentChange?: (content: string) => void;
   initialSources?: Source[];
   onTitleSuggestion?: (title: string) => void;
+  initialRelevanceMessage?: string;
 }
 
 interface AIAssistance {
@@ -17,7 +18,7 @@ interface AIAssistance {
   prompt?: string;
 }
 
-export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [], onTitleSuggestion }: ContentEditorProps) {
+export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [], onTitleSuggestion, initialRelevanceMessage }: ContentEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [selectedText, setSelectedText] = useState('');
@@ -27,6 +28,7 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
   const [isExporting, setIsExporting] = useState(false);
   const [sources, setSources] = useState<Source[]>(initialSources);
   const [showSources, setShowSources] = useState(false);
+  const [relevanceMessage, setRelevanceMessage] = useState<string | null>(initialRelevanceMessage || null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const updateContent = useCallback((newContent: string) => {
@@ -103,6 +105,12 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
         console.log('🏷️ Received title suggestion:', result.suggestedTitle);
         onTitleSuggestion(result.suggestedTitle);
       }
+
+      // Handle relevance message if provided
+      if (result.relevanceMessage) {
+        console.log('📄 Source relevance message:', result.relevanceMessage);
+        setRelevanceMessage(result.relevanceMessage);
+      }
     } catch (error) {
       console.error('AI assistance error:', error);
       alert('AI assistance failed. Please try again.');
@@ -161,6 +169,12 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
     }
   };
 
+  // Clear relevance message when sources change
+  useEffect(() => {
+    // Clear message when sources are added, removed, or their status changes
+    setRelevanceMessage(null);
+  }, [sources]);
+
   const getReadySources = () => sources.filter(s => s.status === 'ready');
 
   return (
@@ -217,6 +231,26 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
             </button>
           </div>
         </div>
+
+        {/* Relevance Message Notification */}
+        {relevanceMessage && (
+          <div className="mx-4 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-start gap-2">
+              <div className="text-amber-600 text-sm">⚠️</div>
+              <div className="flex-1">
+                <div className="text-sm font-medium text-amber-800 mb-1">Source Relevance Note</div>
+                <div className="text-sm text-amber-700">{relevanceMessage}</div>
+              </div>
+              <button
+                onClick={() => setRelevanceMessage(null)}
+                className="text-amber-600 hover:text-amber-800 text-sm ml-2"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
 
       {/* Editor */}
       <div className="flex-1 relative">
