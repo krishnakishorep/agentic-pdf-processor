@@ -230,6 +230,7 @@ export default function WritePage() {
               initialSources={initialSources}
               onTitleSuggestion={handleTitleSuggestion}
               initialRelevanceMessage={initialRelevanceMessage}
+              title={title}
             />
           )}
         </div>

@@ -11,6 +11,7 @@ interface ContentEditorProps {
   initialSources?: Source[];
   onTitleSuggestion?: (title: string) => void;
   initialRelevanceMessage?: string;
+  title?: string;
 }
 
 interface AIAssistance {
@@ -18,7 +19,7 @@ interface AIAssistance {
   prompt?: string;
 }
 
-export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [], onTitleSuggestion, initialRelevanceMessage }: ContentEditorProps) {
+export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [], onTitleSuggestion, initialRelevanceMessage, title }: ContentEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [selectedText, setSelectedText] = useState('');
@@ -134,8 +135,8 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
       pdf.setFontSize(16);
       pdf.setFont('helvetica', 'bold');
       
-      const title = "AI Generated Content";
-      pdf.text(title, margin, margin + 10);
+      const documentTitle = title || "AI Generated Content";
+      pdf.text(documentTitle, margin, margin + 10);
       
       // Add date
       pdf.setFontSize(10);
@@ -159,8 +160,11 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
         yPosition += lineHeight;
       }
       
-      // Save the PDF
-      pdf.save(`content-${Date.now()}.pdf`);
+      // Save the PDF with the document title as filename
+      const filename = title 
+        ? `${title.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.pdf`
+        : `content-${Date.now()}.pdf`;
+      pdf.save(filename);
     } catch (error) {
       console.error('PDF export error:', error);
       alert('PDF export failed. Please try again.');
