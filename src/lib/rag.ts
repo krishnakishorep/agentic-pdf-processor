@@ -2,7 +2,6 @@ import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { SupabaseVectorStore } from '@langchain/community/vectorstores/supabase';
 import { createClient } from '@supabase/supabase-js';
-import { RetrievalQAChain } from 'langchain/chains';
 import { ChatOpenAI } from '@langchain/openai';
 import { Document } from '@langchain/core/documents';
 
@@ -161,45 +160,6 @@ export async function addDocumentsToVectorStore(
   }
 }
 
-/**
- * Create a RAG chain for content generation
- */
-export async function createRAGChain(
-  vectorStore?: SupabaseVectorStore
-): Promise<RetrievalQAChain> {
-  try {
-    const store = vectorStore || await getVectorStore();
-    
-    // Configure the retriever
-    const retriever = store.asRetriever({
-      k: 6, // Retrieve top 6 most relevant chunks
-      searchType: 'mmr', // Maximum marginal relevance for diversity
-      searchKwargs: {
-        fetchK: 20, // Fetch 20 candidates, then rerank to 6
-        lambda: 0.7, // Balance between similarity and diversity
-      },
-    });
-
-    // Configure the LLM
-    const llm = new ChatOpenAI({
-      openAIApiKey: process.env.OPENAI_API_KEY!,
-      modelName: 'gpt-4o', // Using best model for content quality
-      temperature: 0.7, // Creative but focused
-      maxTokens: 2000, // Reasonable response length
-    });
-
-    // Create the RAG chain
-    const chain = RetrievalQAChain.fromLLM(llm, retriever, {
-      returnSourceDocuments: true,
-      chainType: 'stuff', // Combine all retrieved docs into single context
-    });
-
-    return chain;
-  } catch (error) {
-    console.error('Error creating RAG chain:', error);
-    throw new Error('Failed to create RAG chain');
-  }
-}
 
 /**
  * Query the RAG system for content assistance
@@ -326,11 +286,15 @@ export async function getVectorStoreStats(): Promise<{
       .from('documents_embeddings')
       .select('*', { count: 'exact', head: true });
 
-      const { data: uniqueSourcesData } = await supabase
-    .from('documents_embeddings')
-    .select('metadata->sourceId', { distinct: true });
+    const { data: sourceIdsData } = await supabase
+      .from('documents_embeddings')
+      .select('metadata->sourceId');
 
-    const uniqueSources = uniqueSourcesData?.length || 0;
+    // Manually deduplicate sourceIds on client side
+    const uniqueSourceIds = new Set(
+      sourceIdsData?.map(item => item?.sourceId).filter(Boolean) || []
+    );
+    const uniqueSources = uniqueSourceIds.size;
 
     return {
       totalDocuments: totalDocuments || 0,
