@@ -1,118 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
-import { createWorker } from 'tesseract.js';
 
-// Helper function to clean extracted text and remove binary/garbled characters
+// Simple text cleaning - much less needed with proper extraction
 function cleanExtractedText(text: string): string {
   if (!text || text.length === 0) return '';
   
   try {
-    // Remove non-printable characters, but keep basic punctuation and letters
-    let cleanText = text
-      // Keep only printable ASCII characters, spaces, and common unicode letters
-      .replace(/[^\x20-\x7E\u00C0-\u017F\u0100-\u024F]/g, ' ')
-      // Remove sequences of special characters that look like encoding issues
-      .replace(/[^\w\s\.\,\!\?\-\:\;\(\)\[\]\{\}\"\'\/\\&@#\$%\^*+=<>~`|]/g, ' ')
-      // Remove single characters surrounded by spaces (common in garbled text)
-      .replace(/\s[^\w\s]\s/g, ' ')
-      // Replace multiple spaces with single space
-      .replace(/\s+/g, ' ')
+    // Basic cleanup for properly extracted text
+    return text
+      .replace(/\s+/g, ' ') // Normalize whitespace
       .trim();
-    
-    // If the text contains too many short "words" (likely garbled), filter them out
-    const words = cleanText.split(' ').filter(word => {
-      // Keep words that are:
-      // - Length > 2 OR
-      // - Common short words OR  
-      // - Numbers OR
-      // - Single letters that are likely meaningful (A, I, etc.)
-      return word.length > 2 || 
-             /^(a|an|at|be|by|do|go|he|if|in|is|it|me|my|no|of|on|or|so|to|up|us|we|I|A)$/i.test(word) ||
-             /^\d+$/.test(word) ||
-             /^[a-zA-Z]$/.test(word);
-    });
-    
-    // If we filtered out too many words, the original text was likely garbled
-    const filteredText = words.join(' ');
-    const wordsKeptRatio = words.length / Math.max(cleanText.split(' ').length, 1);
-    
-    // If we kept less than 30% of words, the text is likely too garbled to use
-    if (wordsKeptRatio < 0.3 && filteredText.length < 100) {
-      console.log('⚠️ Text appears to be heavily garbled, filtering out');
-      return '';
-    }
-    
-    return filteredText;
-    
   } catch (error) {
     console.log('❌ Text cleaning failed:', error);
     return '';
   }
 }
 
-// Helper function to extract text from PDF buffer using basic string extraction
-async function extractTextFromPDFBuffer(buffer: Buffer): Promise<string> {
+// Proper PDF text extraction using pdf-parse with dynamic import
+async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   try {
-    // Simple text extraction from PDF binary data
-    const pdfString = buffer.toString('binary');
-    const rawText = extractBasicTextFromPDFString(pdfString);
-    return cleanExtractedText(rawText);
+    console.log('📄 Extracting text using pdf-parse...');
+    
+    // Dynamic import to avoid SSR issues
+    const pdfParse = (await import('pdf-parse')).default;
+    const data = await pdfParse(buffer);
+    const text = cleanExtractedText(data.text);
+    
+    console.log(`✅ Extracted ${text.length} characters from ${data.numpages} pages`);
+    return text;
   } catch (error) {
-    console.log('Buffer extraction failed:', error);
-    return '';
-  }
-}
-
-// Helper function to extract basic text from PDF string data
-function extractBasicTextFromPDFString(pdfString: string): string {
-  try {
-    // Look for text objects in PDF structure
-    const textMatches = [];
-    
-    // Find text between parentheses (basic PDF text objects)
-    const parenRegex = /\(([^)]+)\)/g;
-    let match;
-    while ((match = parenRegex.exec(pdfString)) !== null) {
-      if (match[1] && match[1].length > 1) {
-        textMatches.push(match[1]);
-      }
-    }
-    
-    // Find text between square brackets
-    const bracketRegex = /\[([^\]]+)\]/g;
-    while ((match = bracketRegex.exec(pdfString)) !== null) {
-      if (match[1] && match[1].length > 1 && !match[1].includes('/')) {
-        textMatches.push(match[1]);
-      }
-    }
-    
-    // Find stream text content (more advanced)
-    const streamRegex = /stream[\s\n\r]+(.*?)[\s\n\r]+endstream/gm;
-    while ((match = streamRegex.exec(pdfString)) !== null) {
-      if (match[1]) {
-        // Extract readable text from stream
-        const streamText = match[1].replace(/[^\x20-\x7E]/g, ' ').trim();
-        if (streamText.length > 10) {
-          textMatches.push(streamText);
-        }
-      }
-    }
-    
-    // Combine and clean up text
-    let extractedText = textMatches.join(' ');
-    
-    // Clean up the text
-    extractedText = extractedText
-      .replace(/\\n/g, ' ')
-      .replace(/\\r/g, ' ')
-      .replace(/\\t/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    return cleanExtractedText(extractedText);
-  } catch (error) {
-    console.log('String extraction failed:', error);
+    console.log('❌ pdf-parse extraction failed:', error);
     return '';
   }
 }
@@ -409,56 +327,11 @@ async function processPdf(file: File) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     
-    console.log('🔍 Starting PDF text extraction using pdf-lib...');
+    // Use proper PDF text extraction
+    const extractedText = await extractTextFromPDF(buffer);
     
-    try {
-      // Use pdf-lib which is already in dependencies and more reliable
-      const { PDFDocument } = await import('pdf-lib');
-      
-      // Load the PDF document
-      const pdfDoc = await PDFDocument.load(buffer);
-      const pages = pdfDoc.getPages();
-      const numPages = pages.length;
-      
-      console.log(`📄 PDF loaded: ${numPages} pages`);
-      
-      // For pdf-lib, we need to extract text differently since it's primarily for PDF creation
-      // Let's try a simpler approach using the buffer directly with a custom text extractor
-      const content = await extractTextFromPDFBuffer(buffer);
-      
-      if (!content || content.length < 30) {
-        throw new Error('Could not extract text from PDF. This PDF might be image-based, scanned, or password-protected. Try using OCR on screenshots instead.');
-      }
-      
-      console.log(`✅ PDF text extracted: ${content.length} characters`);
-      
-      return NextResponse.json({
-        success: true,
-        content: content.substring(0, 15000) + (content.length > 15000 ? '...' : ''),
-        pages: numPages,
-        type: 'pdf'
-      });
-      
-    } catch (pdfLibError) {
-      console.log('⚠️ pdf-lib extraction failed, trying alternative method...', pdfLibError);
-      
-      // Fallback: Simple text extraction attempt
-      const textContent = buffer.toString('utf8');
-      const rawExtractedText = extractBasicTextFromPDFString(textContent);
-      const extractedText = cleanExtractedText(rawExtractedText);
-      
-      if (extractedText && extractedText.length >= 30) {
-        console.log('✅ Fallback text extraction successful');
-        
-        return NextResponse.json({
-          success: true,
-          content: extractedText.substring(0, 15000) + (extractedText.length > 15000 ? '...' : ''),
-          pages: 1, // Unknown page count
-          type: 'pdf'
-        });
-      }
-      
-      // If we still don't have good text, provide a helpful message
+    if (!extractedText || extractedText.length < 20) {
+      // Fallback message for PDFs that can't be processed
       const fallbackContent = `PDF Document: ${file.name}
 
 This PDF has been uploaded but text extraction was not successful. This could happen if:
@@ -473,10 +346,17 @@ The document is still available as a source, but no preview text can be displaye
       return NextResponse.json({
         success: true,
         content: fallbackContent,
-        pages: 1,
         type: 'pdf'
       });
     }
+    
+    console.log(`✅ PDF text extracted successfully: ${extractedText.length} characters`);
+    
+    return NextResponse.json({
+      success: true,
+      content: extractedText.length > 15000 ? extractedText.substring(0, 15000) + '...' : extractedText,
+      type: 'pdf'
+    });
 
     
   } catch (error) {
@@ -503,45 +383,100 @@ async function processScreenshot(file: File) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     
-    // Initialize Tesseract worker with error handling
-    const worker = await createWorker('eng');
-    
+    // Use OpenAI Vision API for reliable OCR processing
     try {
-      console.log('🔍 Starting OCR processing...');
-      const { data: { text } } = await worker.recognize(buffer);
+      console.log('🔍 Starting OCR processing with OpenAI Vision API...');
       
-      let content = text.trim();
+      const base64Image = buffer.toString('base64');
+      const imageDataUrl = `data:${file.type};base64,${base64Image}`;
       
-      if (!content || content.length < 10) {
-        throw new Error('Could not extract text from image or image contains no readable text');
+      // Check if OpenAI API key is available
+      if (!process.env.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key not configured - cannot process screenshots');
       }
       
-      // Clean up OCR content
-      content = content
-        .replace(/\s+/g, ' ')
-        .replace(/[^\w\s\.\,\!\?\-\:\;\(\)]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const openai = await import('openai');
+      const client = new openai.default({
+        apiKey: process.env.OPENAI_API_KEY
+      });
+      
+      const response = await client.chat.completions.create({
+        model: "gpt-4o", // Updated to current vision model
+        messages: [
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: "Extract all visible text from this image. Return only the text content without any descriptions, formatting, or commentary. If there's no readable text, respond with 'NO_TEXT_FOUND'." 
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageDataUrl,
+                },
+              },
+            ],
+          },
+        ],
+        max_tokens: 1500,
+        temperature: 0.1, // Low temperature for consistent text extraction
+      });
+      
+      const extractedText = response.choices[0]?.message?.content?.trim();
+      
+      if (!extractedText || extractedText === 'NO_TEXT_FOUND' || extractedText.toLowerCase().includes('no text') || extractedText.toLowerCase().includes('cannot read')) {
+        throw new Error('No readable text found in the image');
+      }
+      
+      // Clean up the extracted text
+      const cleanedContent = cleanExtractedText(extractedText);
+      
+      if (!cleanedContent || cleanedContent.length < 10) {
+        throw new Error('Extracted text is too short or contains no meaningful content');
+      }
       
       // Limit content length
-      if (content.length > 8000) {
-        content = content.substring(0, 8000) + '...';
-      }
+      const finalContent = cleanedContent.length > 8000 
+        ? cleanedContent.substring(0, 8000) + '...' 
+        : cleanedContent;
       
-      console.log(`✅ Screenshot processed - Content: ${content.length} characters`);
+      console.log(`✅ Screenshot OCR successful - Content: ${finalContent.length} characters`);
       
       return NextResponse.json({
         success: true,
-        content,
+        content: finalContent,
         type: 'screenshot'
       });
       
-    } finally {
-      try {
-        await worker.terminate();
-      } catch (terminateError) {
-        console.warn('⚠️ Warning: Failed to terminate OCR worker:', terminateError);
-      }
+    } catch (ocrError: any) {
+      console.error('❌ Screenshot OCR processing failed:', ocrError);
+      
+      // Provide a helpful fallback when OCR fails
+      const fallbackContent = `Screenshot: ${file.name}
+
+This screenshot has been uploaded but automatic text recognition (OCR) was not successful. This could happen if:
+- The image has low resolution or poor quality text
+- The text is too stylized or uses unusual fonts
+- The image contains mainly graphics or non-text content
+- No readable text is present in the image
+
+The screenshot is still available as a source and can be referenced in your content generation requests by mentioning "${file.name}".
+
+To improve OCR results, try:
+- Using higher resolution images (minimum 300 DPI recommended)
+- Ensuring text has good contrast with the background
+- Cropping to focus on text areas
+- Using standard fonts and avoiding decorative text
+- Converting to PNG or JPEG format`;
+
+      console.log('⚠️ OCR processing failed, using fallback message');
+      
+      return NextResponse.json({
+        success: true,
+        content: fallbackContent,
+        type: 'screenshot'
+      });
     }
     
   } catch (error) {

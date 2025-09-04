@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { PDFDocument } from 'pdf-lib';
+import pdfParse from 'pdf-parse';
 import { downloadFile } from './supabase';
 import { emitDocumentEvent } from './document-events';
 
@@ -33,49 +33,22 @@ export class PDFProcessor {
       // Download PDF from Supabase Storage
       const fileBlob = await downloadFile(filePath);
       
-      // Convert Blob to ArrayBuffer, then to Uint8Array
+      // Convert Blob to Buffer for pdf-parse
       const arrayBuffer = await fileBlob.arrayBuffer();
-      const pdfBytes = new Uint8Array(arrayBuffer);
+      const buffer = Buffer.from(arrayBuffer);
       
-      // Load PDF with pdf-lib
-      const pdfDoc = await PDFDocument.load(pdfBytes);
-      const pageCount = pdfDoc.getPageCount();
+      // Extract text using pdf-parse
+      const data = await pdfParse(buffer);
       
-      // Extract text from pages
-      // Note: pdf-lib doesn't directly extract text, so we'll use a basic approach
-      // For production, you might want to use pdf2pic + OCR or other libraries
-      let extractedText = '';
+      const text = data.text.trim();
+      const pageCount = data.numpages;
+      const wordCount = text.split(/\s+/).filter((word: string) => word.length > 0).length;
       
-      // For now, we'll create a basic text representation
-      // This is a simplified approach - in production you'd want proper text extraction
-      const pages = pdfDoc.getPages();
-      for (let i = 0; i < pages.length; i++) {
-        const page = pages[i];
-        const { width, height } = page.getSize();
-        // Basic text placeholder - this would need proper OCR for real text extraction
-        extractedText += `Page ${i + 1} content (${width}x${height})\n`;
+      console.log(`✅ Real text extracted: ${text.length} characters, ${wordCount} words, ${pageCount} pages`);
+      
+      if (!text || text.length < 10) {
+        throw new Error('PDF contains no extractable text. This might be a scanned document or image-based PDF.');
       }
-      
-      // For demo purposes, create some sample text based on filename
-      const filename = filePath.split('/').pop() || 'document';
-      const sampleText = `Document: ${filename}
-      
-This is a ${pageCount}-page PDF document that has been processed by the Agentic PDF Processor.
-The document contains various content that would typically be extracted and analyzed.
-This is a sample text representation for demonstration purposes.
-
-Key characteristics:
-- Total pages: ${pageCount}
-- Document format: PDF
-- Processing status: Analyzed
-
-This text would normally contain the actual extracted content from the PDF file,
-including all readable text, headings, paragraphs, and structured data.`;
-
-      const text = sampleText.trim();
-      const wordCount = text.split(/\s+/).length;
-      
-      console.log(`✅ Text extracted: ${text.length} characters, ${wordCount} words, ${pageCount} pages`);
       
       return {
         text,

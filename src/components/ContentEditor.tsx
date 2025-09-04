@@ -9,6 +9,7 @@ interface ContentEditorProps {
   initialContent?: string;
   onContentChange?: (content: string) => void;
   initialSources?: Source[];
+  onTitleSuggestion?: (title: string) => void;
 }
 
 interface AIAssistance {
@@ -16,7 +17,7 @@ interface AIAssistance {
   prompt?: string;
 }
 
-export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [] }: ContentEditorProps) {
+export default function ContentEditor({ initialContent = '', onContentChange, initialSources = [], onTitleSuggestion }: ContentEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [selectedText, setSelectedText] = useState('');
@@ -95,6 +96,12 @@ export default function ContentEditor({ initialContent = '', onContentChange, in
         const end = textarea.selectionEnd;
         const newContent = content.substring(0, start) + result.content + content.substring(end);
         updateContent(newContent);
+      }
+
+      // Handle title suggestion if provided
+      if (result.suggestedTitle && onTitleSuggestion) {
+        console.log('🏷️ Received title suggestion:', result.suggestedTitle);
+        onTitleSuggestion(result.suggestedTitle);
       }
     } catch (error) {
       console.error('AI assistance error:', error);

@@ -26,17 +26,59 @@ function truncateContentForModel(content: string, maxTokens: number): string {
   return truncated + '\n\n[Content truncated to fit context limits]';
 }
 
-// Helper function to summarize sources when they're too large
-function summarizeSources(sources: any[]): string {
-  if (!sources.length) return '';
+// Simplified content quality check - much simpler now that we have proper text extraction
+function assessContentQuality(content: string): { score: number; isUsable: boolean; reason?: string } {
+  if (!content || typeof content !== 'string') {
+    return { score: 0, isUsable: false, reason: 'No content' };
+  }
   
-  const summaries = sources.map((source, index) => {
-    const preview = source.content.substring(0, 200);
-    return `${index + 1}. ${source.name} (${source.type}): ${preview}${source.content.length > 200 ? '...' : ''}`;
-  });
+  const trimmed = content.trim();
+  const wordCount = trimmed.split(/\s+/).filter(word => word.length > 0).length;
   
-  return `Reference Sources (summarized):\n${summaries.join('\n\n')}`;
+  // Simple checks for usable content
+  if (wordCount < 5) {
+    return { score: 0, isUsable: false, reason: 'Too short' };
+  }
+  
+  if (trimmed.length < 20) {
+    return { score: 0, isUsable: false, reason: 'Insufficient content' };
+  }
+  
+  // Basic quality score based on length and word count
+  let score = Math.min(wordCount * 2, 80); // Up to 80 points for word count
+  if (trimmed.length > 100) score += 10; // Bonus for longer content
+  if (trimmed.length > 500) score += 10; // Extra bonus for substantial content
+  
+  const isUsable = score >= 30 && wordCount >= 10;
+  
+  return { 
+    score: Math.round(score), 
+    isUsable, 
+    reason: isUsable ? undefined : `Too short (${wordCount} words)`
+  };
 }
+
+// Simple content validation - no complex cleaning needed with proper extraction
+function validateSourceContent(content: string): { isValid: boolean; reason?: string } {
+  if (!content || typeof content !== 'string') {
+    return { isValid: false, reason: 'No content' };
+  }
+  
+  const trimmed = content.trim();
+  const wordCount = trimmed.split(/\s+/).filter(word => word.length > 0).length;
+  
+  if (wordCount < 5) {
+    return { isValid: false, reason: 'Too short' };
+  }
+  
+  if (trimmed.length < 20) {
+    return { isValid: false, reason: 'Insufficient content' };
+  }
+  
+  return { isValid: true };
+}
+
+// No longer needed - simplified approach in main code
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -94,24 +136,41 @@ export async function POST(request: NextRequest) {
       userPrompt += `\n\nContext (full document):\n${context}`;
     }
 
-    // Add sources if available with smart truncation
+    // Add sources if available - simplified validation with proper text extraction
     if (sources && sources.length > 0) {
-      const totalSourcesLength = sources.reduce((sum: number, s: any) => sum + s.content.length, 0);
+      console.log(`📚 Processing ${sources.length} source(s)...`);
       
-      if (totalSourcesLength > 8000) {
-        console.log(`📚 Large sources detected (${totalSourcesLength} chars), using summarized version`);
-        userPrompt += `\n\n${summarizeSources(sources)}`;
-      } else {
-        userPrompt += `\n\nReference Sources:\n`;
-        sources.forEach((source: any, index: number) => {
-          const maxSourceLength = 2000; // Limit each source
-          const sourceContent = source.content.length > maxSourceLength 
-            ? source.content.substring(0, maxSourceLength) + '...'
-            : source.content;
-          userPrompt += `\n${index + 1}. ${source.name} (${source.type}):\n${sourceContent}\n`;
-        });
+      // Simple validation of sources
+      const validSources = sources.filter((source: any) => {
+        const validation = validateSourceContent(source.content);
+        console.log(`📄 Source "${source.name}": ${validation.isValid ? 'VALID' : 'INVALID' + (validation.reason ? ` - ${validation.reason}` : '')}`);
+        return validation.isValid;
+      });
+      
+      console.log(`✅ Using ${validSources.length}/${sources.length} valid sources`);
+      
+      if (validSources.length > 0) {
+        const totalSourcesLength = validSources.reduce((sum: number, s: any) => sum + s.content.length, 0);
+        
+        if (totalSourcesLength > 10000) {
+          console.log(`📚 Large sources detected (${totalSourcesLength} chars), using summarized version`);
+          userPrompt += `\n\nReference Sources (summarized):\n`;
+          validSources.forEach((source: any, index: number) => {
+            const preview = source.content.substring(0, 300);
+            userPrompt += `\n${index + 1}. ${source.name} (${source.type}): ${preview}${source.content.length > 300 ? '...' : ''}\n`;
+          });
+        } else {
+          userPrompt += `\n\nReference Sources:\n`;
+          validSources.forEach((source: any, index: number) => {
+            const maxSourceLength = 3000; // More generous limit with proper extraction
+            const sourceContent = source.content.length > maxSourceLength 
+              ? source.content.substring(0, maxSourceLength) + '...'
+              : source.content;
+            userPrompt += `\n${index + 1}. ${source.name} (${source.type}):\n${sourceContent}\n`;
+          });
+        }
+        userPrompt += `\nPlease use these sources as reference material when generating content.`;
       }
-      userPrompt += `\nPlease use these sources as reference material when generating content.`;
     }
 
     // Add custom prompt if provided
@@ -157,10 +216,48 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ AI Assist complete - Generated ${result.length} characters`);
 
+    // Generate title suggestion if this is a significant content update
+    let suggestedTitle = null;
+    if ((type === 'continue' && result.length > 300) || (context && context.length + result.length > 500)) {
+      try {
+        console.log('🏷️ Generating title suggestion...');
+        
+        const titlePrompt = `Based on this content, suggest a concise, descriptive title (maximum 8 words):
+
+CONTENT:
+${type === 'continue' ? context + '\n\n' + result : context}
+
+Instructions:
+- Return ONLY the title, no quotes or formatting
+- Make it engaging and descriptive
+- Keep it under 8 words
+- Focus on the main topic or theme`;
+
+        const titleResponse = await openai.chat.completions.create({
+          model: 'gpt-4o-mini', // Use faster model for title generation
+          messages: [
+            { role: 'system', content: 'You are a professional editor who creates engaging, concise titles.' },
+            { role: 'user', content: titlePrompt }
+          ],
+          max_tokens: 50,
+          temperature: 0.7,
+        });
+
+        const title = titleResponse.choices[0]?.message?.content?.trim();
+        if (title && title.length > 0 && title.length < 100) {
+          suggestedTitle = title.replace(/^["']|["']$/g, ''); // Remove quotes if present
+          console.log(`✅ Title suggested: "${suggestedTitle}"`);
+        }
+      } catch (titleError) {
+        console.log('⚠️ Title generation failed, skipping:', titleError);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       content: result.trim(),
       type,
+      suggestedTitle,
       usage: completion.usage
     });
 

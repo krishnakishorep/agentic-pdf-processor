@@ -13,6 +13,8 @@ export default function WritePage() {
   const [title, setTitle] = useState('');
   const [isGeneratingInitial, setIsGeneratingInitial] = useState(false);
   const [initialSources, setInitialSources] = useState<Source[]>([]);
+  const [showTitleSuggestion, setShowTitleSuggestion] = useState(false);
+  const [suggestedTitle, setSuggestedTitle] = useState('');
 
   useEffect(() => {
     const prompt = searchParams.get('prompt');
@@ -93,6 +95,34 @@ export default function WritePage() {
     localStorage.setItem('draft-content', content);
   };
 
+  const handleTitleSuggestion = (newTitle: string) => {
+    // Only suggest if current title is empty or generic
+    const isGenericTitle = !title || 
+                          title === '' || 
+                          title === 'AI Generated Content' || 
+                          title === 'Enter your document title...';
+    
+    if (isGenericTitle) {
+      setSuggestedTitle(newTitle);
+      setShowTitleSuggestion(true);
+      // Auto-apply the suggestion after a short delay to show the animation
+      setTimeout(() => {
+        setTitle(newTitle);
+        setShowTitleSuggestion(false);
+      }, 2000);
+    }
+  };
+
+  const acceptTitleSuggestion = () => {
+    setTitle(suggestedTitle);
+    setShowTitleSuggestion(false);
+  };
+
+  const dismissTitleSuggestion = () => {
+    setShowTitleSuggestion(false);
+    setSuggestedTitle('');
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Navigation Header */}
@@ -121,14 +151,53 @@ export default function WritePage() {
       {/* Main Content Area */}
       <div className="flex-1 container mx-auto px-6 py-6">
         {/* Title Input */}
-        <div className="mb-6">
+        <div className="mb-6 relative">
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Enter your document title..."
-            className="w-full text-2xl font-bold text-gray-800 border-0 border-b-2 border-gray-200 focus:border-blue-500 focus:outline-none bg-transparent py-2"
+            className={`w-full text-2xl font-bold text-gray-800 border-0 border-b-2 ${
+              showTitleSuggestion ? 'border-green-400' : 'border-gray-200'
+            } focus:border-blue-500 focus:outline-none bg-transparent py-2 transition-colors`}
           />
+          
+          {/* Title Suggestion Popup */}
+          {showTitleSuggestion && (
+            <div className="absolute top-full mt-2 left-0 right-0 bg-green-50 border border-green-200 rounded-lg p-3 shadow-lg animate-slideDown">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-green-600">✨</span>
+                    <span className="text-sm font-medium text-green-800">AI suggested title:</span>
+                  </div>
+                  <div className="text-lg font-semibold text-green-900 mb-2">
+                    "{suggestedTitle}"
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={acceptTitleSuggestion}
+                      className="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition-colors"
+                    >
+                      Use This Title
+                    </button>
+                    <button
+                      onClick={dismissTitleSuggestion}
+                      className="text-sm text-green-600 hover:text-green-800 transition-colors"
+                    >
+                      Keep Current
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={dismissTitleSuggestion}
+                  className="text-green-600 hover:text-green-800 p-1"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Content Editor */}
@@ -146,6 +215,7 @@ export default function WritePage() {
               initialContent={initialContent}
               onContentChange={handleContentChange}
               initialSources={initialSources}
+              onTitleSuggestion={handleTitleSuggestion}
             />
           )}
         </div>

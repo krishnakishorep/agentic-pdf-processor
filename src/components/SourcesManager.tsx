@@ -140,6 +140,54 @@ export default function SourcesManager({ sources, onSourcesChange, className = '
     onSourcesChange(sources.filter(s => s.id !== sourceId));
   };
 
+  const cleanPreviewText = (content: string): string => {
+    if (!content || content.length === 0) return 'No preview available';
+    
+    try {
+      // First, basic character cleaning
+      let cleanText = content
+        .replace(/[^\x20-\x7E\u00C0-\u017F\u0100-\u024F\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Split into words and filter out garbage
+      const words = cleanText.split(' ');
+      const meaningfulWords = words.filter(word => {
+        // Keep words that have at least 1 character and contain letters (more lenient)
+        if (word.length < 1) return false;
+        if (!/[a-zA-Z0-9]/.test(word)) return false; // Allow numbers too
+        
+        // Filter out obvious encoding artifacts (only extreme cases)
+        if (/^[^\w\s\.,!?;:()\[\]{}"'-]+$/.test(word)) return false;
+        
+        return true; // Keep most words now
+      });
+      
+      // Be more lenient - only reject if very little meaningful content
+      if (meaningfulWords.length === 0) {
+        return 'No readable text found';
+      }
+      
+      // If we have very few meaningful words compared to total, show a mixed message
+      if (meaningfulWords.length < words.length * 0.1 && words.length > 20) {
+        return `Document processed (${meaningfulWords.length} readable words found) - content may have formatting issues but is available for AI assistance`;
+      }
+      
+      // Join meaningful words and return a reasonable preview
+      const cleanPreview = meaningfulWords.slice(0, 25).join(' ');
+      
+      // If the clean preview is too short, provide more context
+      if (cleanPreview.length < 20 && content.length > 100) {
+        return `Document processed successfully - ${content.length} characters available for AI assistance`;
+      }
+      
+      return cleanPreview.length > 0 ? cleanPreview : 'Document processed successfully';
+      
+    } catch (error) {
+      return 'Document processed - preview unavailable';
+    }
+  };
+
   const getSourceIcon = (source: Source) => {
     if (source.status === 'processing') return '⏳';
     if (source.status === 'error') return '❌';
@@ -263,6 +311,7 @@ export default function SourcesManager({ sources, onSourcesChange, className = '
                         {source.status === 'processing' && ' • Processing...'}
                         {source.status === 'ready' && ` • ${source.content.length} characters extracted`}
                         {source.status === 'error' && ` • Error: ${source.error}`}
+                        {source.status === 'ready' && source.type === 'pdf' && source.content.length > 0 && ' • Available for AI assistance'}
                       </div>
                     </div>
                   </div>
@@ -280,13 +329,10 @@ export default function SourcesManager({ sources, onSourcesChange, className = '
                 {source.status === 'ready' && source.content && (
                   <div className="mt-2 pt-2 border-t border-current border-opacity-20">
                     <div className="text-xs opacity-75 max-h-12 overflow-hidden leading-relaxed">
-                      {/* Clean preview text to avoid displaying garbled characters */}
-                      {source.content
-                        .replace(/[^\x20-\x7E\u00C0-\u017F\u0100-\u024F\s]/g, '') // Remove non-printable chars
-                        .replace(/\s+/g, ' ') // Normalize whitespace
-                        .substring(0, 200)
-                        .trim()}
-                      {source.content.length > 200 ? '...' : ''}
+                      {cleanPreviewText(source.content)}
+                      {source.content.length > 200 && 
+                       !cleanPreviewText(source.content).includes('No readable') &&
+                       !cleanPreviewText(source.content).includes('preview unavailable') ? '...' : ''}
                     </div>
                   </div>
                 )}
