@@ -33,11 +33,12 @@ export class PDFProcessor {
       // Download PDF from Supabase Storage
       const fileBlob = await downloadFile(filePath);
       
-      // Convert Blob to Buffer for pdf-parse
+      // Convert Blob to Buffer
       const arrayBuffer = await fileBlob.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       
       // Extract text using pdf-parse
+      const pdfParse = (await import('pdf-parse')).default;
       const data = await pdfParse(buffer);
       
       const text = data.text.trim();

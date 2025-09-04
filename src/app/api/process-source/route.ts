@@ -2,30 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 
-// Simple text cleaning - much less needed with proper extraction
-function cleanExtractedText(text: string): string {
-  if (!text || text.length === 0) return '';
-  
-  try {
-    // Basic cleanup for properly extracted text
-    return text
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .trim();
-  } catch (error) {
-    console.log('❌ Text cleaning failed:', error);
-    return '';
-  }
-}
 
-// Proper PDF text extraction using pdf-parse with dynamic import
+// PDF text extraction using pdf-parse
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   try {
     console.log('📄 Extracting text using pdf-parse...');
     
-    // Dynamic import to avoid SSR issues
     const pdfParse = (await import('pdf-parse')).default;
     const data = await pdfParse(buffer);
-    const text = cleanExtractedText(data.text);
+    const text = data.text.trim(); // Simple cleanup
     
     console.log(`✅ Extracted ${text.length} characters from ${data.numpages} pages`);
     return text;
@@ -430,7 +415,7 @@ async function processScreenshot(file: File) {
       }
       
       // Clean up the extracted text
-      const cleanedContent = cleanExtractedText(extractedText);
+      const cleanedContent = extractedText.replace(/\s+/g, ' ').trim();
       
       if (!cleanedContent || cleanedContent.length < 10) {
         throw new Error('Extracted text is too short or contains no meaningful content');

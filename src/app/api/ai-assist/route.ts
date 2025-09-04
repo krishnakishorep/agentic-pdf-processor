@@ -26,59 +26,6 @@ function truncateContentForModel(content: string, maxTokens: number): string {
   return truncated + '\n\n[Content truncated to fit context limits]';
 }
 
-// Simplified content quality check - much simpler now that we have proper text extraction
-function assessContentQuality(content: string): { score: number; isUsable: boolean; reason?: string } {
-  if (!content || typeof content !== 'string') {
-    return { score: 0, isUsable: false, reason: 'No content' };
-  }
-  
-  const trimmed = content.trim();
-  const wordCount = trimmed.split(/\s+/).filter(word => word.length > 0).length;
-  
-  // Simple checks for usable content
-  if (wordCount < 5) {
-    return { score: 0, isUsable: false, reason: 'Too short' };
-  }
-  
-  if (trimmed.length < 20) {
-    return { score: 0, isUsable: false, reason: 'Insufficient content' };
-  }
-  
-  // Basic quality score based on length and word count
-  let score = Math.min(wordCount * 2, 80); // Up to 80 points for word count
-  if (trimmed.length > 100) score += 10; // Bonus for longer content
-  if (trimmed.length > 500) score += 10; // Extra bonus for substantial content
-  
-  const isUsable = score >= 30 && wordCount >= 10;
-  
-  return { 
-    score: Math.round(score), 
-    isUsable, 
-    reason: isUsable ? undefined : `Too short (${wordCount} words)`
-  };
-}
-
-// Simple content validation - no complex cleaning needed with proper extraction
-function validateSourceContent(content: string): { isValid: boolean; reason?: string } {
-  if (!content || typeof content !== 'string') {
-    return { isValid: false, reason: 'No content' };
-  }
-  
-  const trimmed = content.trim();
-  const wordCount = trimmed.split(/\s+/).filter(word => word.length > 0).length;
-  
-  if (wordCount < 5) {
-    return { isValid: false, reason: 'Too short' };
-  }
-  
-  if (trimmed.length < 20) {
-    return { isValid: false, reason: 'Insufficient content' };
-  }
-  
-  return { isValid: true };
-}
-
-// No longer needed - simplified approach in main code
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -136,15 +83,15 @@ export async function POST(request: NextRequest) {
       userPrompt += `\n\nContext (full document):\n${context}`;
     }
 
-    // Add sources if available - simplified validation with proper text extraction
+    // Add sources if available
     if (sources && sources.length > 0) {
       console.log(`📚 Processing ${sources.length} source(s)...`);
       
-      // Simple validation of sources
+      // Simple validation - just check for basic content
       const validSources = sources.filter((source: any) => {
-        const validation = validateSourceContent(source.content);
-        console.log(`📄 Source "${source.name}": ${validation.isValid ? 'VALID' : 'INVALID' + (validation.reason ? ` - ${validation.reason}` : '')}`);
-        return validation.isValid;
+        const hasContent = source.content && source.content.trim().length > 20;
+        console.log(`📄 Source "${source.name}": ${hasContent ? 'VALID' : 'INVALID - too short'}`);
+        return hasContent;
       });
       
       console.log(`✅ Using ${validSources.length}/${sources.length} valid sources`);
@@ -162,7 +109,7 @@ export async function POST(request: NextRequest) {
         } else {
           userPrompt += `\n\nReference Sources:\n`;
           validSources.forEach((source: any, index: number) => {
-            const maxSourceLength = 3000; // More generous limit with proper extraction
+            const maxSourceLength = 3000;
             const sourceContent = source.content.length > maxSourceLength 
               ? source.content.substring(0, maxSourceLength) + '...'
               : source.content;
