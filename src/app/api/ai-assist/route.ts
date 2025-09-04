@@ -26,6 +26,78 @@ function truncateContentForModel(content: string, maxTokens: number): string {
   return truncated + '\n\n[Content truncated to fit context limits]';
 }
 
+// Intent-based source integration - different strategies per user action
+function integrateSourcesForIntent(type: string, validSources: any[]): string {
+  if (validSources.length === 0) return '';
+  
+  let sourceSection = '';
+  
+  switch (type) {
+    case 'continue':
+      // Seamless integration - weave naturally into continuation
+      sourceSection = `\n\nBackground context from your research:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const excerpt = source.content.substring(0, 400);
+        sourceSection += `\n${source.name}: ${excerpt}${source.content.length > 400 ? '...' : ''}\n`;
+      });
+      sourceSection += `\nDraw from this context naturally as you continue writing, but don't explicitly reference it unless relevant.`;
+      break;
+
+    case 'improve':
+      // Active integration - add evidence and support
+      sourceSection = `\n\nSupporting evidence and references to strengthen the content:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const excerpt = source.content.substring(0, 600);
+        sourceSection += `\n${index + 1}. From "${source.name}": ${excerpt}${source.content.length > 600 ? '...' : ''}\n`;
+      });
+      sourceSection += `\nUse this evidence to support claims, add credibility, and strengthen arguments in the improved version.`;
+      break;
+
+    case 'expand':
+      // Detail-focused integration - add specific facts and depth  
+      sourceSection = `\n\nDetailed information for expansion:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const excerpt = source.content.substring(0, 800);
+        sourceSection += `\n${index + 1}. ${source.name} (${source.type}):\n${excerpt}${source.content.length > 800 ? '...' : ''}\n`;
+      });
+      sourceSection += `\nUse specific facts, examples, and details from these sources to expand the content with depth and richness.`;
+      break;
+
+    case 'rewrite':
+      // Accuracy-focused integration - maintain source accuracy while changing style
+      sourceSection = `\n\nOriginal source material to preserve accuracy:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const excerpt = source.content.substring(0, 500);
+        sourceSection += `\n${source.name}: ${excerpt}${source.content.length > 500 ? '...' : ''}\n`;
+      });
+      sourceSection += `\nWhen rewriting, ensure factual accuracy matches these sources while changing expression and style.`;
+      break;
+
+    case 'summarize':
+      // Key-points integration - distill source essentials
+      sourceSection = `\n\nSource material for comprehensive summarization:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const excerpt = source.content.substring(0, 600);
+        sourceSection += `\n${source.name}: ${excerpt}${source.content.length > 600 ? '...' : ''}\n`;
+      });
+      sourceSection += `\nDistill key points from both the original text and these sources into a cohesive summary.`;
+      break;
+
+    default:
+      // Fallback to generic approach
+      sourceSection = `\n\nReference Sources:\n`;
+      validSources.forEach((source: any, index: number) => {
+        const maxSourceLength = 3000;
+        const sourceContent = source.content.length > maxSourceLength 
+          ? source.content.substring(0, maxSourceLength) + '...'
+          : source.content;
+        sourceSection += `\n${index + 1}. ${source.name} (${source.type}):\n${sourceContent}\n`;
+      });
+      sourceSection += `\nPlease use these sources as reference material when generating content.`;
+  }
+  
+  return sourceSection;
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -47,27 +119,27 @@ export async function POST(request: NextRequest) {
 
     switch (type) {
       case 'continue':
-        systemPrompt = "You are a professional writer helping to continue content. Write a natural continuation that maintains the tone, style, and topic of the existing content.";
+        systemPrompt = "You are a professional writer helping to continue content. Write a natural continuation that maintains the tone, style, and topic. If background context is provided, weave insights naturally without explicit citations.";
         userPrompt = `Please continue this content naturally and coherently:\n\n${content}`;
         break;
 
       case 'improve':
-        systemPrompt = "You are a professional editor. Improve the given text while maintaining its core meaning. Focus on clarity, flow, grammar, and impact.";
+        systemPrompt = "You are a professional editor. Improve the given text while maintaining its core meaning. Focus on clarity, flow, grammar, and impact. Use supporting evidence when provided to strengthen claims and add credibility.";
         userPrompt = `Please improve this text:\n\n${content}`;
         break;
 
       case 'rewrite':
-        systemPrompt = "You are a professional writer. Rewrite the given text to express the same ideas in a different way. Maintain the meaning while changing the structure and wording.";
+        systemPrompt = "You are a professional writer. Rewrite the given text to express the same ideas in a different way. Maintain the meaning while changing the structure and wording. Preserve factual accuracy from any source material provided.";
         userPrompt = `Please rewrite this text:\n\n${content}`;
         break;
 
       case 'expand':
-        systemPrompt = "You are a professional writer. Expand the given text by adding more detail, examples, or depth while maintaining the original message and tone.";
+        systemPrompt = "You are a professional writer. Expand the given text by adding more detail, examples, or depth while maintaining the original message and tone. Use specific facts and details from provided sources to enrich the content.";
         userPrompt = `Please expand this text with more detail:\n\n${content}`;
         break;
 
       case 'summarize':
-        systemPrompt = "You are a professional editor. Summarize the given text into a concise version that captures the key points and main message.";
+        systemPrompt = "You are a professional editor. Summarize the given text into a concise version that captures the key points and main message. Include important insights from any additional source material provided.";
         userPrompt = `Please summarize this text:\n\n${content}`;
         break;
 
@@ -83,9 +155,9 @@ export async function POST(request: NextRequest) {
       userPrompt += `\n\nContext (full document):\n${context}`;
     }
 
-    // Add sources if available
+    // Add sources with intent-based integration
     if (sources && sources.length > 0) {
-      console.log(`📚 Processing ${sources.length} source(s)...`);
+      console.log(`📚 Processing ${sources.length} source(s) for "${type}" operation...`);
       
       // Simple validation - just check for basic content
       const validSources = sources.filter((source: any) => {
@@ -94,29 +166,12 @@ export async function POST(request: NextRequest) {
         return hasContent;
       });
       
-      console.log(`✅ Using ${validSources.length}/${sources.length} valid sources`);
+      console.log(`✅ Using ${validSources.length}/${sources.length} valid sources with "${type}" integration strategy`);
       
       if (validSources.length > 0) {
-        const totalSourcesLength = validSources.reduce((sum: number, s: any) => sum + s.content.length, 0);
-        
-        if (totalSourcesLength > 10000) {
-          console.log(`📚 Large sources detected (${totalSourcesLength} chars), using summarized version`);
-          userPrompt += `\n\nReference Sources (summarized):\n`;
-          validSources.forEach((source: any, index: number) => {
-            const preview = source.content.substring(0, 300);
-            userPrompt += `\n${index + 1}. ${source.name} (${source.type}): ${preview}${source.content.length > 300 ? '...' : ''}\n`;
-          });
-        } else {
-          userPrompt += `\n\nReference Sources:\n`;
-          validSources.forEach((source: any, index: number) => {
-            const maxSourceLength = 3000;
-            const sourceContent = source.content.length > maxSourceLength 
-              ? source.content.substring(0, maxSourceLength) + '...'
-              : source.content;
-            userPrompt += `\n${index + 1}. ${source.name} (${source.type}):\n${sourceContent}\n`;
-          });
-        }
-        userPrompt += `\nPlease use these sources as reference material when generating content.`;
+        // Use intent-based source integration instead of generic approach
+        const sourceIntegration = integrateSourcesForIntent(type, validSources);
+        userPrompt += sourceIntegration;
       }
     }
 
