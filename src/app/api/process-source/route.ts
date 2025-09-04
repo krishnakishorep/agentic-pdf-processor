@@ -1,7 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
+import { processDocumentForRAG, addDocumentsToVectorStore } from '@/lib/rag';
 
+/**
+ * Helper function to add processed content to RAG vector store
+ */
+async function addToRAGVectorStore(
+  content: string,
+  sourceId: string,
+  sourceName: string,
+  sourceType: 'pdf' | 'url' | 'screenshot'
+): Promise<void> {
+  try {
+    // Only process content that has substantial text for RAG
+    if (!content || content.length < 100) {
+      console.log('⚠️ Content too short for RAG processing, skipping...');
+      return;
+    }
+
+    console.log(`🔄 Adding "${sourceName}" to RAG vector store...`);
+
+    const documents = await processDocumentForRAG(content, {
+      sourceId,
+      sourceName,
+      sourceType,
+      uploadedAt: new Date().toISOString(),
+    });
+
+    await addDocumentsToVectorStore(documents);
+    
+    console.log(`✅ Successfully added "${sourceName}" to RAG (${documents.length} chunks)`);
+  } catch (error) {
+    console.error('❌ Failed to add to RAG vector store:', error);
+    // Don't fail the main processing if RAG fails
+  }
+}
 
 // PDF text extraction using pdf-parse
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
@@ -266,12 +300,21 @@ async function processUrl(url: string) {
       
       console.log(`✅ URL processed - Title: "${title}", Content: ${content.length} characters`);
       
+      // Generate unique source ID for this URL
+      const sourceId = `url_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Add to RAG vector store (non-blocking)
+      addToRAGVectorStore(content, sourceId, title, 'url').catch(error => {
+        console.error('RAG processing failed for URL:', error);
+      });
+      
       return NextResponse.json({
         success: true,
         title,
         content,
         url,
-        type: 'url'
+        type: 'url',
+        sourceId // Include sourceId for future reference
       });
       
     } catch (error) {
@@ -328,19 +371,39 @@ The document is still available as a source, but no preview text can be displaye
 
       console.log('⚠️ PDF text extraction failed, using fallback message');
       
+      // Generate unique source ID for this PDF
+      const sourceId = `pdf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Even with fallback, add to RAG (it has contextual info about the PDF)
+      addToRAGVectorStore(fallbackContent, sourceId, file.name, 'pdf').catch(error => {
+        console.error('RAG processing failed for PDF (fallback):', error);
+      });
+      
       return NextResponse.json({
         success: true,
         content: fallbackContent,
-        type: 'pdf'
+        type: 'pdf',
+        sourceId
       });
     }
     
     console.log(`✅ PDF text extracted successfully: ${extractedText.length} characters`);
     
+    // Generate unique source ID for this PDF
+    const sourceId = `pdf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const finalContent = extractedText.length > 15000 ? extractedText.substring(0, 15000) + '...' : extractedText;
+    
+    // Add to RAG vector store (use full extracted text, not truncated)
+    addToRAGVectorStore(extractedText, sourceId, file.name, 'pdf').catch(error => {
+      console.error('RAG processing failed for PDF:', error);
+    });
+    
     return NextResponse.json({
       success: true,
-      content: extractedText.length > 15000 ? extractedText.substring(0, 15000) + '...' : extractedText,
-      type: 'pdf'
+      content: finalContent,
+      type: 'pdf',
+      sourceId
     });
 
     
@@ -428,10 +491,19 @@ async function processScreenshot(file: File) {
       
       console.log(`✅ Screenshot OCR successful - Content: ${finalContent.length} characters`);
       
+      // Generate unique source ID for this screenshot
+      const sourceId = `screenshot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Add to RAG vector store (use full cleaned content, not truncated)
+      addToRAGVectorStore(cleanedContent, sourceId, file.name, 'screenshot').catch(error => {
+        console.error('RAG processing failed for screenshot:', error);
+      });
+      
       return NextResponse.json({
         success: true,
         content: finalContent,
-        type: 'screenshot'
+        type: 'screenshot',
+        sourceId
       });
       
     } catch (ocrError: any) {
@@ -457,10 +529,19 @@ To improve OCR results, try:
 
       console.log('⚠️ OCR processing failed, using fallback message');
       
+      // Generate unique source ID for this screenshot
+      const sourceId = `screenshot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Add fallback content to RAG (it has contextual info about the screenshot)
+      addToRAGVectorStore(fallbackContent, sourceId, file.name, 'screenshot').catch(error => {
+        console.error('RAG processing failed for screenshot (fallback):', error);
+      });
+      
       return NextResponse.json({
         success: true,
         content: fallbackContent,
-        type: 'screenshot'
+        type: 'screenshot',
+        sourceId
       });
     }
     
