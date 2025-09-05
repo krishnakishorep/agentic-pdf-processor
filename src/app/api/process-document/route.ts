@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { documentDb } from '@/lib/database';
 import { emitDocumentEvent } from '@/lib/document-events';
 import { supabase } from '@/lib/supabase';
-import { extractTextWithPdfParse } from '@/lib/pdf-processor';
+import pdfParse from 'pdf-parse';
 import { processDocumentForRAG, addDocumentsToVectorStore } from '@/lib/rag';
 
 export async function POST(request: NextRequest) {
@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
       emitDocumentEvent.processing(documentId, 'Extracting text from PDF...');
       
       const buffer = await data.arrayBuffer();
-      const extractedText = await extractTextWithPdfParse(Buffer.from(buffer));
+      const pdfData = await pdfParse(Buffer.from(buffer));
+      const extractedText = pdfData.text;
 
       if (!extractedText || extractedText.length < 50) {
         throw new Error('Insufficient text content extracted from PDF');
