@@ -165,6 +165,35 @@ export interface Database {
           created_at?: string;
         };
       };
+      ai_written_content: {
+        Row: {
+          id: string;
+          title: string;
+          content: string;
+          action: 'continue' | 'improve' | 'expand' | 'rewrite' | 'generate';
+          sources: any[] | null; // JSONB array
+          user_input: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          content: string;
+          action: 'continue' | 'improve' | 'expand' | 'rewrite' | 'generate';
+          sources?: any[] | null;
+          user_input?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          content?: string;
+          action?: 'continue' | 'improve' | 'expand' | 'rewrite' | 'generate';
+          sources?: any[] | null;
+          user_input?: string | null;
+          created_at?: string;
+        };
+      };
     };
     Views: {
       [_ in never]: never;
@@ -196,6 +225,10 @@ export type AgentTaskUpdate = Database['public']['Tables']['agent_tasks']['Updat
 
 export type GeneratedContent = Database['public']['Tables']['generated_content']['Row'];
 export type GeneratedContentInsert = Database['public']['Tables']['generated_content']['Insert'];
+
+export type AIWrittenContent = Database['public']['Tables']['ai_written_content']['Row'];
+export type AIWrittenContentInsert = Database['public']['Tables']['ai_written_content']['Insert'];
+export type AIWrittenContentUpdate = Database['public']['Tables']['ai_written_content']['Update'];
 
 // Helper types for common operations
 export interface ProcessedDocument extends Document {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { queryRAG } from '@/lib/rag';
+import { aiWrittenContentDb } from '@/lib/database';
 
 /**
  * RAG-powered AI Assist API
@@ -72,6 +73,25 @@ export async function POST(request: NextRequest) {
         relevance: 'high' // RAG pre-filters for relevance
       })) || [];
 
+      // Save AI written content to database if we have a title
+      let savedContentId = null;
+      if (suggestedTitle) {
+        try {
+          const savedContent = await aiWrittenContentDb.create({
+            title: suggestedTitle,
+            content: ragResponse.text.trim(),
+            action: type as 'continue' | 'improve' | 'expand' | 'rewrite' | 'generate',
+            sources: ragResponse.sources || [],
+            user_input: content || context || null,
+          });
+          savedContentId = savedContent.id;
+          console.log(`💾 Saved AI content to database with ID: ${savedContentId}`);
+        } catch (saveError) {
+          console.error('⚠️ Failed to save AI content:', saveError);
+          // Don't fail the request if saving fails
+        }
+      }
+
       return NextResponse.json({
         success: true,
         content: ragResponse.text.trim(),
@@ -80,7 +100,8 @@ export async function POST(request: NextRequest) {
         sourcesUsed: ragResponse.sources || [],
         sourceDetails: sourcesUsed,
         ragEnabled: true,
-        chunksUsed: ragResponse.sourceDocuments?.length || 0
+        chunksUsed: ragResponse.sourceDocuments?.length || 0,
+        savedContentId
       });
 
     } catch (ragError) {

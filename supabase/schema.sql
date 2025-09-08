@@ -167,8 +167,47 @@ CREATE POLICY "Public insert access" ON generated_content FOR INSERT WITH CHECK 
 -- Bucket name: 'pdf-documents'
 -- Public access: Yes (for open platform)
 
+-- Create ai_written_content table (AI assist responses)
+CREATE TABLE IF NOT EXISTS ai_written_content (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,              -- AI-generated title
+  content TEXT NOT NULL,            -- AI-generated content
+  action TEXT NOT NULL,             -- 'continue'|'improve'|'expand'|'rewrite'|'generate'
+  sources JSONB DEFAULT '[]',       -- Sources used for this response
+  user_input TEXT,                  -- Original user input/context
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS for ai_written_content
+ALTER TABLE ai_written_content ENABLE ROW LEVEL SECURITY;
+
+-- Allow public access to ai_written_content
+CREATE POLICY "Public read access" ON ai_written_content FOR SELECT USING (true);
+CREATE POLICY "Public insert access" ON ai_written_content FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update access" ON ai_written_content FOR UPDATE USING (true);
+
+-- Create view for recent AI written content
+CREATE OR REPLACE VIEW recent_ai_content AS
+SELECT 
+    id,
+    title,
+    LEFT(content, 100) || '...' as preview,  -- First 100 chars for preview
+    action,
+    sources,
+    created_at,
+    CASE 
+        WHEN created_at > NOW() - INTERVAL '1 hour' THEN 'Just now'
+        WHEN created_at > NOW() - INTERVAL '1 day' THEN EXTRACT(HOUR FROM NOW() - created_at) || ' hours ago'
+        WHEN created_at > NOW() - INTERVAL '7 days' THEN EXTRACT(DAY FROM NOW() - created_at) || ' days ago'
+        ELSE TO_CHAR(created_at, 'Mon DD, YYYY')
+    END as time_ago
+FROM ai_written_content
+ORDER BY created_at DESC
+LIMIT 10;
+
 COMMENT ON TABLE documents IS 'Main table storing uploaded PDF documents';
 COMMENT ON TABLE document_analysis IS 'AI analysis results for documents';
 COMMENT ON TABLE extracted_data IS 'Structured data extracted from documents';
 COMMENT ON TABLE agent_tasks IS 'Track individual agent processing tasks';
 COMMENT ON TABLE generated_content IS 'AI-generated content from documents';
+COMMENT ON TABLE ai_written_content IS 'AI assist responses and generated content';

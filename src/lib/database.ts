@@ -12,7 +12,10 @@ import type {
   AgentTaskUpdate,
   GeneratedContent,
   GeneratedContentInsert,
-  ProcessedDocument
+  ProcessedDocument,
+  AIWrittenContent,
+  AIWrittenContentInsert,
+  AIWrittenContentUpdate
 } from './database.types';
 
 // Document operations
@@ -285,6 +288,71 @@ export const generatedContentDb = {
       throw error;
     }
     return data;
+  }
+};
+
+// AI Written Content operations
+export const aiWrittenContentDb = {
+  // Create AI written content
+  async create(content: AIWrittenContentInsert): Promise<AIWrittenContent> {
+    const { data, error } = await supabase
+      .from('ai_written_content')
+      .insert(content)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  // Get AI written content by ID
+  async getById(id: string): Promise<AIWrittenContent | null> {
+    const { data, error } = await supabase
+      .from('ai_written_content')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    return data;
+  },
+
+  // Get recent AI written content
+  async getRecent(limit: number = 10): Promise<AIWrittenContent[]> {
+    const { data, error } = await supabase
+      .from('ai_written_content')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  // Update AI written content
+  async update(id: string, updates: AIWrittenContentUpdate): Promise<AIWrittenContent> {
+    const { data, error } = await supabase
+      .from('ai_written_content')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  // Delete AI written content
+  async delete(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('ai_written_content')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
   }
 };
 

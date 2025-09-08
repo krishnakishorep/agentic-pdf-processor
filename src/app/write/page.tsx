@@ -20,12 +20,62 @@ export default function WritePage() {
   useEffect(() => {
     const prompt = searchParams.get('prompt');
     const mode = searchParams.get('mode');
+    const contentId = searchParams.get('content');
 
     if (prompt && mode === 'generate') {
       setIsGeneratingInitial(true);
       generateInitialContent(prompt);
+    } else if (contentId) {
+      setIsGeneratingInitial(true);
+      loadAIContent(contentId);
     }
   }, [searchParams]);
+
+  const loadAIContent = async (contentId: string) => {
+    try {
+      console.log('📄 Loading AI content:', contentId);
+      
+      const response = await fetch('/api/ai-written-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: contentId })
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        const content = result.content;
+        setInitialContent(content.content);
+        setTitle(content.title);
+        
+        // Load sources if they exist
+        if (content.sources && content.sources.length > 0) {
+          // Map the sources to the Source format expected by the editor
+          const mappedSources: Source[] = content.sources.map((sourceName: string, index: number) => ({
+            id: `loaded-${index}`,
+            type: 'url' as const, // Default to URL, could be enhanced
+            name: sourceName,
+            content: '', // Content would be in RAG system
+            status: 'ready' as const
+          }));
+          
+          setInitialSources(mappedSources);
+        }
+        
+        console.log('✅ Loaded AI content successfully');
+      } else {
+        throw new Error(result.error || 'Failed to load content');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load AI content:', error);
+      setInitialContent('');
+      setTitle('Failed to load content');
+    } finally {
+      setIsGeneratingInitial(false);
+      // Clear the URL parameter after loading
+      router.replace('/write', { scroll: false });
+    }
+  };
 
   const generateInitialContent = async (prompt: string) => {
     try {
